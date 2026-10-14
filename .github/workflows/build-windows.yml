@@ -2,6 +2,12 @@ name: Build Windows portable package
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional existing Release tag to upload the Windows package to'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -48,3 +54,24 @@ jobs:
           name: PaperEdit2-Windows-x64
           path: artifacts/PaperEdit2-Windows-x64.zip
           if-no-files-found: error
+
+  publish-release:
+    if: ${{ inputs.release_tag != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PaperEdit2-Windows-x64
+          path: windows
+      - name: Upload tested package to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          cd windows
+          sha256sum PaperEdit2-Windows-x64.zip > SHA256SUMS-Windows.txt
+          cat SHA256SUMS-Windows.txt
+          gh release upload "$RELEASE_TAG" PaperEdit2-Windows-x64.zip SHA256SUMS-Windows.txt --repo "$GITHUB_REPOSITORY" --clobber
