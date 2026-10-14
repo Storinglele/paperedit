@@ -274,7 +274,8 @@ class DocumentSession:
                     raise EditError('保存的加密文件验证失败。')
                 if len(check) != self.page_count:
                     raise EditError('保存验证失败，原文件未改动。')
-            with open(tmp, 'rb') as stream:
+            # Windows _commit (used by fsync) needs a writable handle.
+            with open(tmp, 'r+b') as stream:
                 os.fsync(stream.fileno())
             os.replace(tmp, path)
             self._saved = hashlib.sha256(self.snapshot()).digest()

@@ -4,7 +4,7 @@ from PySide6.QtGui import QImage, QPainter, QColor, QPen, QPainterPath
 from PySide6.QtCore import QRectF, Qt
 root=Path(__file__).resolve().parents[1]
 iconset=root/'artifacts'/'PaperEdit.iconset'
-iconset.mkdir(exist_ok=True)
+iconset.mkdir(parents=True,exist_ok=True)
 for size in [16,32,64,128,256,512,1024]:
     image=QImage(size,size,QImage.Format.Format_ARGB32)
     image.fill(Qt.GlobalColor.transparent)

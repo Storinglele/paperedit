@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+.venv/bin/python scripts/create_demo.py
 .venv/bin/python scripts/create_icon.py
 .venv/bin/python -m PyInstaller \
   --noconfirm --clean --windowed --name PaperEdit2 --icon artifacts/PaperEdit.icns \
