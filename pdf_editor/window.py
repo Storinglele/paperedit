@@ -1,5 +1,6 @@
 """PaperEdit desktop window: document navigation and explicit text editing."""
 from pathlib import Path
+import os
 import fitz
 from PySide6.QtCore import Qt, QSize, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QIcon, QPixmap, QColor, QKeySequence, QShortcut, QDesktopServices
@@ -623,11 +624,13 @@ class EditorWindow(QMainWindow):
         if not self.session.can_extract:
             self.show_error('此 PDF 的权限不允许提取文字，无法导出 Word。')
             return False
-        job = ConversionJob(self)
         source = self.session.source
+        if destination is not None and not self._word_destination_allowed(destination, source):
+            return False
+        job = ConversionJob(self)
         suggested = source.with_suffix('.docx') if source else Path.home() / '导出.docx'
         self.word_export_job = job
-        job.ready.connect(lambda details: self._word_ready(job, details, destination, suggested))
+        job.ready.connect(lambda details: self._word_ready(job, details, destination, suggested, source))
         job.succeeded.connect(self._word_succeeded)
         job.failed.connect(self._word_failed)
         job.finished.connect(self._word_finished)
@@ -646,7 +649,20 @@ class EditorWindow(QMainWindow):
         self.statusBar().showMessage('正在准备 Word 导出…')
         return True
 
-    def _word_ready(self, job, details, destination, suggested):
+    def _word_destination_allowed(self, destination, source):
+        if source:
+            same = os.path.normcase(str(Path(destination).resolve())) == os.path.normcase(str(Path(source).resolve()))
+            if not same and Path(destination).exists() and Path(source).exists():
+                try:
+                    same = os.path.samefile(destination, source)
+                except OSError:
+                    pass
+            if same:
+                self.show_error('请选择新 Word 文件，不能覆盖原 PDF。')
+                return False
+        return True
+
+    def _word_ready(self, job, details, destination, suggested, source):
         if job is not self.word_export_job or not job.running:
             return
         if details.get('image_only_pages'):
@@ -674,6 +690,9 @@ class EditorWindow(QMainWindow):
                         return
             destination = Path(path)
         if not job.running or job.cancelled:
+            return
+        if not self._word_destination_allowed(destination, source):
+            job.cancel()
             return
         try:
             job.proceed(destination)

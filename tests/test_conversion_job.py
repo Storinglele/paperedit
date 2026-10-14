@@ -43,7 +43,7 @@ def test_real_worker_exports_docx(app, tmp_path):
     job.failed.connect(errors.append)
     job.finished.connect(lambda: finished.append(True))
     job.start(source_bytes())
-    assert job.running
+    assert job.running, job.process.errorString()
     wait_until(app, lambda: ready or errors)
     assert not errors
     job_dir = job.job_dir
@@ -203,3 +203,34 @@ def test_missing_output_folder_can_cancel_without_snapshot_leak(app, tmp_path):
     job.cancel()
     wait_until(app, lambda: finished)
     assert not job_dir.exists()
+
+
+def test_cleanup_retries_locked_staged_output_later(app, tmp_path, monkeypatch):
+    import json
+    module = job_module()
+    job = module.ConversionJob()
+    ready, finished = [], []
+    job.ready.connect(ready.append)
+    job.finished.connect(lambda: finished.append(True))
+    job.start(source_bytes())
+    wait_until(app, lambda: ready)
+    root = job.job_dir.parent
+    job_dir = job.job_dir
+    job.proceed(tmp_path / 'locked.docx')
+    staged = job.staged_path
+    real_unlink = Path.unlink
+    def sharing_violation(path, *args, **kwargs):
+        if path == staged:
+            raise PermissionError('sharing violation')
+        return real_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'unlink', sharing_violation)
+    job.cancel()
+    wait_until(app, lambda: finished)
+    assert job_dir.exists() and (job_dir / 'output.json').exists()
+    # Private source should still be deleted even if staged output is locked.
+    assert not (job_dir / 'input.pdf').exists()
+    module.cleanup_stale_jobs(root)
+    assert job_dir.exists()
+    monkeypatch.setattr(Path, 'unlink', real_unlink)
+    module.cleanup_stale_jobs(root)
+    assert not staged.exists() and not job_dir.exists()

@@ -13,6 +13,8 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName('PaperEdit')
     app.setOrganizationName('PaperEdit')
+    from .conversion_job import cleanup_stale_jobs
+    cleanup_stale_jobs()
     window = EditorWindow()
     window.show()
     paths = [arg for arg in sys.argv[1:] if not arg.startswith('-')]

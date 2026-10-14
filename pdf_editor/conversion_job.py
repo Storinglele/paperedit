@@ -33,6 +33,11 @@ def cleanup_stale_jobs(root=None):
             continue
         lock = QLockFile(str(path / 'active.lock'))
         if lock.tryLock(0):
+            worker_lock = QLockFile(str(path / 'worker.lock'))
+            if not worker_lock.tryLock(0):
+                lock.unlock()
+                continue
+            worker_lock.unlock()
             lock.unlock()
             # Remove only the exact staged path recorded for this abandoned job.
             try:
@@ -40,8 +45,18 @@ def cleanup_stale_jobs(root=None):
                 staged = Path(marker['staged_path'])
                 if staged.name == '.paperedit-word-' + path.name + '.docx':
                     staged.unlink(missing_ok=True)
-            except (OSError, ValueError, KeyError):
+            except FileNotFoundError:
                 pass
+            except OSError:
+                # Windows sharing violations may clear later. Preserve marker.
+                for name in ('input.pdf', 'command.json'):
+                    try:
+                        (path / name).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                continue
+            except (ValueError, KeyError):
+                continue
             shutil.rmtree(path, ignore_errors=True)
 
 
@@ -54,8 +69,8 @@ class ConversionJob(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.process = QProcess(self)
-        self.process.setStandardOutputFile(os.devnull)
-        self.process.setStandardErrorFile(os.devnull)
+        self.process.setStandardOutputFile(QProcess.nullDevice())
+        self.process.setStandardErrorFile(QProcess.nullDevice())
         self.process.finished.connect(self._process_finished)
         self.process.errorOccurred.connect(self._process_error)
         self.timer = QTimer(self)
@@ -171,7 +186,7 @@ class ConversionJob(QObject):
     def _process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart and self.running:
             self._finish()
-            self.failed.emit('无法启动 Word 转换任务。')
+            self.failed.emit('无法启动 Word 转换任务：' + self.process.errorString())
 
     def _abort(self, message):
         self._error = message
@@ -179,15 +194,23 @@ class ConversionJob(QObject):
 
     def _cleanup(self):
         self.timer.stop()
+        preserve = False
         if self.staged_path:
             try:
                 self.staged_path.unlink(missing_ok=True)
             except OSError:
-                pass
+                preserve = True
         if self._lock:
             self._lock.unlock()
         if self.job_dir:
-            shutil.rmtree(self.job_dir, ignore_errors=True)
+            if preserve:
+                for name in ('input.pdf', 'command.json'):
+                    try:
+                        (self.job_dir / name).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            else:
+                shutil.rmtree(self.job_dir, ignore_errors=True)
 
     def _finish(self):
         if not self.running:

@@ -229,6 +229,32 @@ def test_close_can_wait_or_cancel_worker(window, app, tmp_path, monkeypatch):
     assert not job.job_dir.exists()
 
 
+def test_word_export_cannot_overwrite_pdf_with_misleading_extension(window, app, tmp_path):
+    from pdf_editor.document import DocumentSession
+    source = tmp_path / 'misnamed.docx'
+    original = window.session.snapshot()
+    source.write_bytes(original)
+    window.session = DocumentSession.open(source)
+    assert not window._start_word_export(source)
+    assert source.read_bytes() == original
+    assert window.word_export_job is None
+
+
+def test_word_export_cannot_overwrite_source_through_symlink(window, app, tmp_path):
+    from pdf_editor.document import DocumentSession
+    source = tmp_path / 'source.pdf'
+    original = window.session.snapshot()
+    source.write_bytes(original)
+    window.session = DocumentSession.open(source)
+    target = tmp_path / 'alias.docx'
+    try:
+        target.symlink_to(source)
+    except OSError:
+        pytest.skip('symlink creation unavailable')
+    assert not window._start_word_export(target)
+    assert source.read_bytes() == original
+
+
 def test_compact_chinese_table_text_can_be_edited_in_place(window, app):
     from pdf_editor.document import DocumentSession
     d = fitz.open()

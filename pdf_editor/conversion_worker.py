@@ -15,6 +15,10 @@ def write_message(path: Path, payload: dict):
 
 def worker_main(job_dir: Path) -> int:
     job_dir = Path(job_dir)
+    from PySide6.QtCore import QLockFile
+    lock = QLockFile(str(job_dir / 'worker.lock'))
+    if not lock.tryLock(0):
+        return 2
     try:
         data = (job_dir / 'input.pdf').read_bytes()
         info = inspect_pdf(data)
@@ -37,3 +41,5 @@ def worker_main(job_dir: Path) -> int:
             write_message(job_dir / 'result.json', {'type': 'error',
                 'message': str(exc) if isinstance(exc, ConversionError) else '转换失败。'})
         return 2
+    finally:
+        lock.unlock()

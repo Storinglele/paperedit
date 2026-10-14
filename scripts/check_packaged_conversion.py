@@ -1,14 +1,13 @@
 """Smoke-test the frozen app's private PDF-to-Word worker without opening the UI."""
 from pathlib import Path
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 
-import fitz
 from docx import Document
+from create_conversion_sample import create_pdf
 
 
 def main():
@@ -19,11 +18,7 @@ def main():
         root = Path(tmp)
         source = root / 'input.pdf'
         staged = root / 'staged.docx'
-        with fitz.open() as doc:
-            page = doc.new_page()
-            page.insert_text((60, 100), 'Packaged conversion test', fontsize=16)
-            page.insert_text((60, 140), '打包转换测试', fontsize=14, fontname='china-s')
-            doc.save(source)
+        create_pdf(source)
         proc = subprocess.Popen([str(executable), '--paperedit-convert-worker', str(root)],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True)
@@ -50,9 +45,16 @@ def main():
             events.append(json.loads(result_path.read_text(encoding='utf-8')))
         if proc.returncode != 0 or not staged.exists():
             raise RuntimeError(f'packaged worker failed: {events!r}')
-        text = '\n'.join(p.text for p in Document(staged).paragraphs)
+        doc = Document(staged)
+        text = '\n'.join(p.text for p in doc.paragraphs)
         if 'Packaged conversion test' not in text or '打包转换测试' not in text:
             raise RuntimeError('packaged DOCX is missing editable text')
+        if 'Second page' not in text or len(doc.sections) < 2:
+            raise RuntimeError('packaged DOCX is missing page structure')
+        if not doc.inline_shapes or not any(
+            [[c.text for c in r.cells] for r in t.rows] == [['Item', 'Amount'], ['Local', '100']]
+            for t in doc.tables):
+            raise RuntimeError('packaged DOCX is missing image or editable table')
         print('Packaged conversion passed:', executable)
 
 

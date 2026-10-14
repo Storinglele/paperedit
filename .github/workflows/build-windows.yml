@@ -44,14 +44,16 @@ jobs:
             Start-Sleep -Seconds 8
             $process.Refresh()
             if ($process.HasExited) { throw "Application exited during startup: $($process.ExitCode)" }
-          if ($process.MainWindowTitle -notlike 'sample.pdf*') { throw "PDF window did not open: $($process.MainWindowTitle)" }
+            if ($process.MainWindowTitle -notlike 'sample.pdf*') { throw "PDF window did not open: $($process.MainWindowTitle)" }
           } finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id }
           }
       - name: Test packaged PDF to Word conversion
         shell: pwsh
         run: |
-          python scripts/check_packaged_conversion.py "${{ github.workspace }}\dist\PaperEdit2\PaperEdit2.exe"
+          $exe = Join-Path $env:RUNNER_TEMP "Portable smoke test\PaperEdit2\PaperEdit2.exe"
+          python scripts/check_packaged_conversion.py "$exe"
+          if ($LASTEXITCODE -ne 0) { throw "Packaged conversion failed" }
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
