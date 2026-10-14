@@ -25,6 +25,7 @@ if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
 & $PythonPath -m PyInstaller --noconfirm --clean --onedir --windowed `
     --name PaperEdit2 --icon (Join-Path $Root "artifacts\PaperEdit.ico") `
     --collect-data pymupdf `
+    --collect-all pdf2docx --collect-all docx --collect-all numpy --collect-all cv2 `
     --distpath (Join-Path $Root "dist") `
     --workpath (Join-Path $Root "build\windows") `
     --specpath (Join-Path $Root "build\windows") `
