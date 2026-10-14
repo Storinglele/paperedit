@@ -110,14 +110,16 @@ def test_broken_worker_cannot_replace_destination(app, tmp_path, monkeypatch, ex
     import sys
     module = job_module()
     script = tmp_path / 'bad_worker.py'
-    script.write_text('''import json, sys
+    script.write_text('''import json, sys, time
 from pathlib import Path
-print(json.dumps({'type':'ready','page_count':1,'text_pages':1,'image_only_pages':[]}),flush=True)
-command=json.loads(sys.stdin.readline())
+root=Path(sys.argv[1])
+(root/'ready.json').write_text(json.dumps({'page_count':1,'text_pages':1,'image_only_pages':[]}))
+while not (root/'command.json').exists(): time.sleep(.02)
+command=json.loads((root/'command.json').read_text())
 Path(command['staged_path']).write_bytes(b'corrupt')
-print(json.dumps({'type':'complete'}),flush=True)
+(root/'result.json').write_text(json.dumps({'type':'complete'}))
 sys.exit(''' + str(exit_code) + ')')
-    monkeypatch.setattr(module, 'worker_command', lambda job_dir: (sys.executable, [str(script)]))
+    monkeypatch.setattr(module, 'worker_command', lambda job_dir: (sys.executable, [str(script), str(job_dir)]))
     job = module.ConversionJob()
     ready, finished, errors = [], [], []
     job.ready.connect(ready.append)
@@ -169,3 +171,35 @@ def test_stale_job_cleanup_preserves_active_job(app, tmp_path):
     assert not stale.exists()
     assert active.exists()
     lock.unlock()
+
+
+def test_worker_handles_missing_console_streams(tmp_path):
+    import subprocess
+    import sys
+    root = tmp_path / 'private'
+    root.mkdir()
+    (root / 'input.pdf').write_bytes(source_bytes())
+    destination = tmp_path / 'no-console.docx'
+    (root / 'command.json').write_text(__import__('json').dumps({'type':'convert', 'staged_path':str(destination)}))
+    code = 'import sys; from pathlib import Path; from pdf_editor.conversion_worker import worker_main; sys.stdout=sys.stdin=sys.stderr=None; sys.exit(worker_main(Path(sys.argv[1])))'
+    result = subprocess.run([sys.executable, '-c', code, str(root)], capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert destination.exists()
+    assert (root / 'ready.json').exists()
+    assert __import__('json').loads((root / 'result.json').read_text())['type'] == 'complete'
+
+
+def test_missing_output_folder_can_cancel_without_snapshot_leak(app, tmp_path):
+    from pdf_editor.conversion import ConversionError
+    job = job_module().ConversionJob()
+    ready, finished = [], []
+    job.ready.connect(ready.append)
+    job.finished.connect(lambda: finished.append(True))
+    job.start(source_bytes())
+    wait_until(app, lambda: ready)
+    job_dir = job.job_dir
+    with pytest.raises(ConversionError):
+        job.proceed(tmp_path / 'missing' / 'out.docx')
+    job.cancel()
+    wait_until(app, lambda: finished)
+    assert not job_dir.exists()

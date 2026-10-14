@@ -29,6 +29,9 @@ def window(app, tmp_path):
     w.show()
     wait_until(app, lambda: bool(w.canvas.spans))
     yield w
+    if w.word_export_job and w.word_export_job.running:
+        w.word_export_job.cancel()
+        w.word_export_job.process.waitForFinished(3000)
     w.session = None
     w.close()
     app.processEvents()
@@ -153,7 +156,7 @@ def test_word_export_contains_pending_edit_and_keeps_pdf_dirty(window, app, tmp_
     assert window.session.dirty
 
 
-def test_word_export_rejects_scanned_pdf_without_starting_job(window, app):
+def test_word_export_rejects_scanned_pdf_before_output_dialog(window, app):
     d = fitz.open()
     p = d.new_page()
     pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False)
@@ -161,8 +164,69 @@ def test_word_export_rejects_scanned_pdf_without_starting_job(window, app):
     p.insert_image((20, 20, 200, 200), pixmap=pix)
     from pdf_editor.document import DocumentSession
     window.session = DocumentSession(d.tobytes())
+    assert window.export_word_dialog()
+    wait_until(app, lambda: window.word_export_job is None)
+    assert window.word_export_job is None
+    assert 'OCR' in window.warning_label.text()
+
+
+def test_word_export_rejects_invalid_edit_before_dialog(window, app, monkeypatch):
+    window.select_span(next(s for s in window.canvas.spans if s.text == 'Editable example'))
+    window.text_input.setPlainText('Overflow ' * 100)
+    assert not window.export_word_dialog()
+    assert window.has_pending_edit()
+    assert window.word_export_job is None
+
+
+def test_password_protected_word_export_can_be_cancelled(window, app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    window.session.password_protected = True
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *args, **kwargs: (str(tmp_path/'secret.docx'), ''))
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args, **kwargs: QMessageBox.StandardButton.No)
     assert not window.export_word_dialog()
     assert window.word_export_job is None
+
+
+def test_restricted_extraction_never_starts_worker(window, app):
+    window.session.can_extract = False
+    assert not window.export_word_dialog()
+    assert window.word_export_job is None
+    assert '权限' in window.warning_label.text()
+
+
+def test_real_export_dialog_adds_extension_and_prevents_duplicates(window, app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    from docx import Document
+    destination = tmp_path / '中文导出'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *args, **kwargs: (str(destination), ''))
+    window.select_span(next(s for s in window.canvas.spans if s.text == 'Editable example'))
+    window.text_input.setPlainText('Dialog edited text')
+    assert window.export_word_dialog()
+    job = window.word_export_job
+    assert not window.export_word_dialog()
+    assert job is window.word_export_job
+    assert not window.word_action.isEnabled()
+    wait_until(app, lambda: window.word_export_job is None, timeout=30000)
+    assert 'Dialog edited text' in '\n'.join(p.text for p in Document(str(destination)+'.docx').paragraphs)
+    assert window.session.dirty
+    assert window.word_action.isEnabled()
+
+
+def test_close_can_wait_or_cancel_worker(window, app, tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args, **kwargs: QMessageBox.StandardButton.No)
+    assert window._start_word_export(tmp_path / 'close.docx')
+    job = window.word_export_job
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted()
+    assert job.running
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert event.isAccepted()
+    assert not job.running
+    assert not job.job_dir.exists()
 
 
 def test_compact_chinese_table_text_can_be_edited_in_place(window, app):

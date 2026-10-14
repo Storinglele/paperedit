@@ -28,22 +28,28 @@ def main():
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True)
         events = []
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            line = proc.stdout.readline()
-            if line:
-                event = json.loads(line)
-                events.append(event)
-                if event.get('type') == 'ready':
-                    proc.stdin.write(json.dumps({'type': 'convert', 'staged_path': str(staged)}) + '\n')
-                    proc.stdin.flush()
-                if event.get('type') in ('complete', 'error'):
-                    break
-            elif proc.poll() is not None:
-                break
-        proc.wait(timeout=10)
+        deadline = time.monotonic() + 90
+        sent = False
+        try:
+            while proc.poll() is None and time.monotonic() < deadline:
+                ready = root / 'ready.json'
+                if ready.exists() and not sent:
+                    events.append(json.loads(ready.read_text(encoding='utf-8')))
+                    temporary = root / 'command.tmp'
+                    temporary.write_text(json.dumps({'type': 'convert', 'staged_path': str(staged)}), encoding='utf-8')
+                    temporary.replace(root / 'command.json')
+                    sent = True
+                time.sleep(.05)
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+            raise RuntimeError('Packaged conversion timed out')
+        result_path = root / 'result.json'
+        if result_path.exists():
+            events.append(json.loads(result_path.read_text(encoding='utf-8')))
         if proc.returncode != 0 or not staged.exists():
-            raise RuntimeError(f'packaged worker failed: {events!r}; stderr={proc.stderr.read()[-1000:]}')
+            raise RuntimeError(f'packaged worker failed: {events!r}')
         text = '\n'.join(p.text for p in Document(staged).paragraphs)
         if 'Packaged conversion test' not in text or '打包转换测试' not in text:
             raise RuntimeError('packaged DOCX is missing editable text')
