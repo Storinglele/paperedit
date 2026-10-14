@@ -2,6 +2,14 @@
 
 供本机使用的 PDF 文字编辑器，参考常见桌面 PDF 编辑流程，独立实现。
 
+从 [GitHub Releases](https://github.com/Storinglele/paperedit/releases/latest) 下载：
+
+- `PaperEdit2-macOS-arm64.zip`：Apple Silicon Mac，解压后打开 `PaperEdit2.app`；未进行 Apple 公证。
+- `PaperEdit2-Windows-x64.zip`：Windows 10/11 64 位免安装版，解压后打开 `PaperEdit2.exe`，保留 `_internal` 文件夹。
+- `SHA256SUMS.txt`：两个压缩包的 SHA-256 校验值。
+
+仓库为私有，请使用有权限的 GitHub 账号下载。发行包均无需安装 Python。
+
 ## 使用
 
 构建后的应用位于 `dist/PaperEdit2.app`，双击打开。开发时双击 `run.command`，或运行：
@@ -18,7 +26,7 @@
 
 目标版本为 Windows 10/11 64 位免安装版，构建输出是 `PaperEdit2-Windows-x64.zip`。解压后直接双击文件夹中的 `PaperEdit2.exe`，无需安装 Python 或管理员权限；可将整个文件夹复制到 U 盘。请保留 `_internal` 文件夹，不能单独复制 EXE。
 
-目前已完成构建配置；Windows 可执行文件尚未生成或验证。本机为 macOS，无法通过 PyInstaller 跨平台生成 Windows EXE。
+Windows 版已在 GitHub Actions 的 Windows 构建机上完成 48 项测试、EXE 构建与 ZIP 解压后的示例 PDF 启动检查。首次实际 Windows 测试发现的 PDF 保存句柄兼容问题已修复。
 
 `artifacts/PaperEdit2-Windows-build-source.zip` 是构建源码包，包含脚本与应用代码，不包含私人 PDF、虚拟环境或 Mac 应用。将它解压到 Windows 构建电脑，安装 64 位 Python 3.12 后双击 `build_windows.cmd` 即可构建。这台构建电脑需要联网下载依赖；软件使用者只需要最终的免安装 ZIP。
 
@@ -44,7 +52,7 @@ py -3.12 -m venv .venv
 - 扫描图片可阅读和添加文字，图片内原文字无法编辑；不含 OCR。
 - 不含格式转换、图片编辑、段落自动重排、云盘、账号。
 - 撤销历史使用 PDF 快照，预算 256 MiB，超限会移除较早历史。
-- macOS 应用为当前 Mac 本机构建，未进行 Apple 公证；Windows 构建目标为 Windows 10/11 x64 便携包，尚待实际构建验证。
+- macOS 应用为 Apple Silicon 本机构建，未进行 Apple 公证；Windows 版为 Windows 10/11 x64 便携包。
 
 ## 开发与测试
 
