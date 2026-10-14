@@ -43,6 +43,8 @@ class DocumentSession:
                 raise EditError('文件没有可阅读的 PDF 页面。')
         self.source = source
         self.editable = editable
+        self.can_extract = True
+        self.password_protected = False
         self._history = [data]
         self._index = 0
         self._saved = hashlib.sha256(data).digest()
@@ -68,6 +70,8 @@ class DocumentSession:
                 editable = bool(auth & 4) or bool(doc.permissions & fitz.PDF_PERM_MODIFY)
                 # Working snapshots are decrypted in memory, never written to the source.
                 session = cls(doc.tobytes(encryption=fitz.PDF_ENCRYPT_NONE), path, editable)
+                session.can_extract = bool(auth & 4) or bool(doc.permissions & fitz.PDF_PERM_COPY)
+                session.password_protected = encrypted
                 if encrypted:
                     session._export_password = password
                     session._export_owner_password = password if auth & 4 else secrets.token_hex(18)
