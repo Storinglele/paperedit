@@ -6,6 +6,10 @@ from .window import EditorWindow
 
 
 def main():
+    if '--paperedit-convert-worker' in sys.argv:
+        from .conversion_worker import worker_main
+        index = sys.argv.index('--paperedit-convert-worker')
+        return worker_main(Path(sys.argv[index + 1]))
     app = QApplication(sys.argv)
     app.setApplicationName('PaperEdit')
     app.setOrganizationName('PaperEdit')
