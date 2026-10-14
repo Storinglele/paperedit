@@ -3,7 +3,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import fitz
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt, QPointF
 from pdf_editor.window import EditorWindow
@@ -138,6 +138,31 @@ def test_pending_invalid_edit_blocks_navigation(window, app):
     window.go_to_page(1)
     assert window.current_page == 0
     assert window.has_pending_edit()
+
+
+def test_word_export_contains_pending_edit_and_keeps_pdf_dirty(window, app, tmp_path, monkeypatch):
+    from docx import Document
+    monkeypatch.setattr(QMessageBox, 'information', lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+    window.set_mode('edit')
+    window.select_span(next(s for s in window.canvas.spans if s.text == 'Editable example'))
+    window.text_input.setPlainText('Word export edit')
+    destination = tmp_path / 'export.docx'
+    assert window._start_word_export(destination)
+    wait_until(app, lambda: destination.exists() and window.word_export_job is None, timeout=60000)
+    assert 'Word export edit' in '\n'.join(p.text for p in Document(destination).paragraphs)
+    assert window.session.dirty
+
+
+def test_word_export_rejects_scanned_pdf_without_starting_job(window, app):
+    d = fitz.open()
+    p = d.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False)
+    pix.clear_with(50)
+    p.insert_image((20, 20, 200, 200), pixmap=pix)
+    from pdf_editor.document import DocumentSession
+    window.session = DocumentSession(d.tobytes())
+    assert not window.export_word_dialog()
+    assert window.word_export_job is None
 
 
 def test_compact_chinese_table_text_can_be_edited_in_place(window, app):

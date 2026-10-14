@@ -14,6 +14,8 @@ from .canvas import PageCanvas
 from .render import RenderTask, ThumbnailTask
 from .theme import STYLE
 from .fonts import choose_font
+from .conversion import ConversionError, inspect_pdf
+from .conversion_job import ConversionJob
 
 
 class EditorWindow(QMainWindow):
@@ -35,6 +37,7 @@ class EditorWindow(QMainWindow):
         self.pool.setMaxThreadCount(1)
         self._workers = {}
         self._draft_original = None
+        self.word_export_job = None
         self.setWindowTitle('PaperEdit · PDF 编辑器')
         self.resize(1320, 880)
         self.setMinimumSize(980, 650)
@@ -61,6 +64,7 @@ class EditorWindow(QMainWindow):
         self.addToolBar(self.toolbar)
         self.open_action = self._action('打开 PDF', self.open_dialog, 'Ctrl+O')
         self.save_action = self._action('另存为', self.save_dialog, 'Ctrl+Shift+S')
+        self.word_action = self._action('导出 Word', self.export_word_dialog, 'Ctrl+Alt+W')
         self.toolbar.addSeparator()
         self.mode_actions = {}
         group = QActionGroup(self)
@@ -233,6 +237,7 @@ class EditorWindow(QMainWindow):
         file_menu = self.menuBar().addMenu('文件')
         file_menu.addAction(self.open_action)
         file_menu.addAction(self.save_action)
+        file_menu.addAction(self.word_action)
         edit_menu = self.menuBar().addMenu('编辑')
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
@@ -579,6 +584,82 @@ class EditorWindow(QMainWindow):
         self.statusBar().showMessage(f'已保存：{path}')
         return True
 
+    def export_word_dialog(self):
+        if self.word_export_job and self.word_export_job.running:
+            self.statusBar().showMessage('正在转换为 Word，请等待当前任务完成。')
+            return False
+        if not self.flush_pending_edit() or not self.session:
+            return False
+        if not self.session.can_extract:
+            self.show_error('此 PDF 的权限不允许提取文字，无法导出 Word。')
+            return False
+        try:
+            info = inspect_pdf(self.session.snapshot())
+        except ConversionError as exc:
+            self.show_error(str(exc))
+            return False
+        if info.image_only_pages:
+            pages = '、'.join(str(n) for n in info.image_only_pages)
+            choice = QMessageBox.question(self, '扫描页面提示',
+                f'第 {pages} 页没有可提取文字，图片中的文字无法编辑。继续导出吗？',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if choice != QMessageBox.StandardButton.Yes:
+                return False
+        source = self.session.source
+        suggested = source.with_suffix('.docx') if source else Path.home() / '导出.docx'
+        path, _ = QFileDialog.getSaveFileName(self, '导出 Word', str(suggested), 'Word 文档 (*.docx)')
+        if not path:
+            return False
+        if not path.lower().endswith('.docx'):
+            path += '.docx'
+        self._start_word_export(Path(path), info)
+        return True
+
+    def _start_word_export(self, destination, info=None):
+        if self.word_export_job and self.word_export_job.running:
+            return False
+        if not self.flush_pending_edit():
+            return False
+        job = ConversionJob(self)
+        self.word_export_job = job
+        job.ready.connect(lambda details: self._word_ready(details, destination))
+        job.succeeded.connect(self._word_succeeded)
+        job.failed.connect(self._word_failed)
+        job.finished.connect(self._word_finished)
+        try:
+            job.start(self.session.snapshot())
+        except ConversionError as exc:
+            self.word_export_job = None
+            self.show_error(str(exc))
+            return False
+        self.word_action.setEnabled(False)
+        self.statusBar().showMessage('正在转换为 Word…')
+        return True
+
+    def _word_ready(self, details, destination):
+        if details.get('image_only_pages'):
+            self.statusBar().showMessage('正在转换为 Word；图片页中的原文字无法编辑。')
+        try:
+            self.word_export_job.proceed(destination)
+        except ConversionError as exc:
+            self._word_failed(str(exc))
+
+    def _word_succeeded(self, path):
+        self.statusBar().showMessage(f'Word 已导出：{path}')
+        QMessageBox.information(self, '导出完成', f'已生成可编辑 Word 文件：\n{path}')
+
+    def _word_failed(self, message):
+        self.show_error(message)
+
+    def _word_finished(self):
+        job = self.word_export_job
+        self.word_action.setEnabled(bool(self.session))
+        if job and job.cancelled:
+            self.statusBar().showMessage('已取消 Word 导出。')
+        self.word_export_job = None
+        self._update_actions()
+
     def go_to_page(self, number):
         if not self.session or number < 0 or number >= self.session.page_count or number == self.current_page:
             return
@@ -707,6 +788,7 @@ class EditorWindow(QMainWindow):
         loaded = self.session is not None
         editable = loaded and self.session.editable
         self.save_action.setEnabled(loaded)
+        self.word_action.setEnabled(loaded and not (self.word_export_job and self.word_export_job.running))
         self.undo_action.setEnabled(loaded and self.session.can_undo)
         self.redo_action.setEnabled(loaded and self.session.can_redo)
         for key, action in self.mode_actions.items():
@@ -746,6 +828,15 @@ class EditorWindow(QMainWindow):
             self._resize_timer.start(180)
 
     def closeEvent(self, event):
+        if self.word_export_job and self.word_export_job.running:
+            choice = QMessageBox.question(self, '正在导出 Word', 'Word 转换仍在进行，要取消转换并关闭吗？',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if choice == QMessageBox.StandardButton.No:
+                event.ignore()
+                return
+            self.word_export_job.cancel()
+            self.word_export_job.process.waitForFinished(3000)
         if self._confirm_discard():
             self.pool.clear()
             self.pool.waitForDone()
